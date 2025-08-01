@@ -1,0 +1,156 @@
+# OTEL Collector configuration for monitoring host natively
+
+receivers:
+
+
+  docker_stats:
+    # does not work on RedHat with podman (gives 'context canceled' and parse errors)
+    endpoint: "unix:///var/run/docker.sock"
+    #    #endpoint: "tcp://host.docker.internal:2375"
+    collection_interval: 10s # (default = 10s)
+    initial_delay: 20s # (default = 1s)
+    timeout: 5s # (default = 5s)
+    metrics:
+      #	container.cpu.limit: # could not be enabled (?), gives config error on startup
+      #           enabled: true
+      container.cpu.utilization:
+        enabled: true
+      container.cpu.logical.count:
+        enabled: true
+      container.uptime:
+        enabled: true
+      container.restarts:
+        enabled: true
+
+
+  # Host metrics
+  hostmetrics/fast:
+    initial_delay: 30s # default = 1s
+    collection_interval: 10s # default = 1m
+    scrapers:
+      cpu:
+        metrics:
+          system.cpu.frequency:
+            enabled: true
+          system.cpu.logical.count:
+            enabled: true
+          system.cpu.utilization:
+            enabled: true  
+      disk:      
+      memory:
+        metrics:
+          system.memory.utilization:
+            enabled: true
+          system.memory.limit:
+            enabled: true
+      load:
+      network:
+      paging:
+        metrics:
+          system.paging.utilization:
+            enabled: true
+      processes:
+      process:
+        mute_process_all_errors: true
+        metrics:
+          process.context_switches:
+            enabled: true
+          process.cpu.utilization:
+            enabled: true
+          process.disk.operations:
+            enabled: true        
+          process.handles:
+            enabled: true
+          process.memory.utilization:
+            enabled: true
+          process.open_file_descriptors:
+            enabled: true  
+          process.paging.faults:
+            enabled: true
+          process.signals_pending:
+            enabled: true              
+          process.threads:
+            enabled: true
+          process.uptime:
+            enabled: true
+
+
+  hostmetrics/slow:
+    initial_delay: 30s # default = 1s
+    collection_interval: 1m # default = 1m
+    scrapers:
+      filesystem:
+        metrics:
+          system.filesystem.utilization:
+            enabled: true
+      system:      
+    
+
+processors:
+  resourcedetection:
+    detectors: [ env, system ]
+  resourcedetection/docker:
+    detectors: [ env, docker ]
+    timeout: 2s
+    override: false
+  batch:
+    send_batch_max_size: 10000
+  batch/agent:
+    send_batch_size: 2000
+    send_batch_max_size: 2000
+    timeout: 10s
+  resource/agent:
+    attributes:
+    - action: upsert
+      key: service.namespace
+      value: agent
+  attributes/agent:
+    actions:
+    - key: service.namespace
+      action: upsert
+      value: agent
+    - key: service.name
+      action: upsert
+      value: otel-collector
+  resourcedetection/system:
+    detectors: [ "system" ]
+    system:
+      hostname_sources: [ "os" ]
+
+
+  transform/servicename:
+    error_mode: ignore
+    metric_statements:
+    - context: datapoint
+      statements:
+      - set(attributes["host.name"], resource.attributes["host.name"])
+      - set(attributes["process.command"], resource.attributes["process.command"])
+      - set(attributes["process.command_line"], resource.attributes["process.command_line"])
+      - set(attributes["process.executable.name"], resource.attributes["process.executable.name"])
+      - set(attributes["process.executable.path"], resource.attributes["process.executable.path"])
+      - set(attributes["process.owner"], resource.attributes["process.owner"])
+      # too high cardinality: - set(attributes["process.parent_pid"], resource.attributes["process.parent_pid"])
+      # too high cardinality: - set(attributes["process.pid"], resource.attributes["process.pid"])
+      - set(resource.attributes["service.name"], "otelcol-host") where resource.attributes["service.name"] == nil
+      - set(resource.attributes["job"], "otelcol-host")
+
+exporters:
+  debug:
+
+  otlp:
+    endpoint: localhost:4317
+    tls:
+      insecure: true
+
+service:
+
+  pipelines:
+
+    metrics/docker:
+      receivers: [ docker_stats ]
+      processors: [ resourcedetection/docker, batch ]
+      exporters: [ otlp, debug ]
+    metrics/self:
+      receivers: [ hostmetrics/fast, hostmetrics/slow ]
+      processors: [ attributes/agent, resourcedetection/system, transform/servicename, batch/agent ]
+      exporters: [ otlp ]

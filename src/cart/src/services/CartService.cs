@@ -7,6 +7,7 @@ using Grpc.Core;
 using cart.cartstore;
 using OpenFeature;
 using Oteldemo;
+using Microsoft.Extensions.Logging;
 
 namespace cart.services;
 
@@ -17,12 +18,16 @@ public class CartService : Oteldemo.CartService.CartServiceBase
     private readonly ICartStore _badCartStore;
     private readonly ICartStore _cartStore;
     private readonly IFeatureClient _featureFlagHelper;
+    private readonly ILogger _logger;
+    private readonly CartServiceEventLogger _eventLogger;
 
-    public CartService(ICartStore cartStore, ICartStore badCartStore, IFeatureClient featureFlagService)
+    public CartService(ICartStore cartStore, ICartStore badCartStore, IFeatureClient featureFlagService, ILogger<CartService> logger)
     {
         _badCartStore = badCartStore;
         _cartStore = cartStore;
         _featureFlagHelper = featureFlagService;
+        _logger = logger;
+        _eventLogger = new CartServiceEventLogger(logger);
     }
 
     public override async Task<Empty> AddItem(AddItemRequest request, ServerCallContext context)
@@ -31,7 +36,7 @@ public class CartService : Oteldemo.CartService.CartServiceBase
         activity?.SetTag("app.user.id", request.UserId);
         activity?.SetTag("app.product.id", request.Item.ProductId);
         activity?.SetTag("app.product.quantity", request.Item.Quantity);
-
+        string failureReason = string.Empty;
         try
         {
             await _cartStore.AddItemAsync(request.UserId, request.Item.ProductId, request.Item.Quantity);
@@ -40,9 +45,14 @@ public class CartService : Oteldemo.CartService.CartServiceBase
         }
         catch (RpcException ex)
         {
+            failureReason = ex.Message;
             activity?.AddException(ex);
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             throw;
+        }
+        finally
+        {
+            _eventLogger.AddItem(request.UserId, request.Item.ProductId, request.Item.Quantity, Activity.Current?.Status == ActivityStatusCode.Error, failureReason);
         }
     }
 
@@ -77,7 +87,8 @@ public class CartService : Oteldemo.CartService.CartServiceBase
         var activity = Activity.Current;
         activity?.SetTag("app.user.id", request.UserId);
         activity?.AddEvent(new("Empty cart"));
-
+        bool isError = false;
+        string failureReason = string.Empty;
         try
         {
             if (await _featureFlagHelper.GetBooleanValueAsync("cartFailure", false))
@@ -91,9 +102,15 @@ public class CartService : Oteldemo.CartService.CartServiceBase
         }
         catch (RpcException ex)
         {
+            failureReason = ex.Message;
+            isError = true;
             Activity.Current?.AddException(ex);
             Activity.Current?.SetStatus(ActivityStatusCode.Error, ex.Message);
             throw;
+        }
+        finally
+        {
+            _eventLogger.EmptyCart(request.UserId, isError, failureReason);
         }
 
         return Empty;

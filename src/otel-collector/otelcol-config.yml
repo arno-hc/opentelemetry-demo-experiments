@@ -18,8 +18,25 @@ receivers:
   nginx:
     endpoint: http://${env:IMAGE_PROVIDER_HOST}:${env:IMAGE_PROVIDER_PORT}/status
     collection_interval: 10s
+
   docker_stats:
-    endpoint: unix:///var/run/docker.sock
+    # does not work on RedHat with podman (gives 'context canceled' and parse errors)
+    endpoint: "unix:///var/run/docker.sock"
+    #    #endpoint: "tcp://host.docker.internal:2375"
+    collection_interval: 10s # (default = 10s)
+    initial_delay: 20s # (default = 1s)
+    timeout: 5s # (default = 5s)
+    metrics:
+      #	container.cpu.limit: # could not be enabled (?), gives config error on startup
+      #           enabled: true
+      container.cpu.utilization:
+        enabled: true
+      container.cpu.logical.count:
+        enabled: true
+      container.uptime:
+        enabled: true
+      container.restarts:
+        enabled: true
   postgresql:
     endpoint: "postgresql:5432"
     username: "root"
@@ -123,6 +140,24 @@ exporters:
       endpoint: "http://opensearch:9200"
       tls:
         insecure: true
+  # otlp/qryn:
+  #   endpoint: "otel-collector-qryn:4317"
+  #   tls:
+  #     insecure: true
+  otlphttp/qryn:
+    endpoint: "http://gigapipe:3100"
+    tls:
+      insecure: true    
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true    
+  prometheusremotewrite/qryn:
+    endpoint: "http://gigapipe:3100/api/v1/prom/remote/write"
+    tls:
+      insecure: true
+    resource_to_telemetry_conversion:
+      enabled: true # Convert resource attributes to metric labels    
 processors:
   batch:
   memory_limiter:
@@ -130,7 +165,7 @@ processors:
     limit_percentage: 80
     spike_limit_percentage: 25
   resourcedetection:
-    detectors: [env, docker, system]
+    detectors: [env, docker, system]    
   transform:
     error_mode: ignore
     trace_statements:
@@ -140,6 +175,21 @@ processors:
           - replace_pattern(name, "\\?.*", "")
           - replace_match(name, "GET /api/products/*", "GET /api/products/{productId}")
 
+  transform/loglevel:
+      error_mode: ignore
+      log_statements:
+        - context: log
+          statements:
+          - set(log.attributes["sy_loglevel"], "unknown")
+          - set(log.attributes["sy_loglevel"], "fatal") where log.severity_number <= SEVERITY_NUMBER_FATAL4 and log.severity_number > 0
+          - set(log.attributes["sy_loglevel"], "error") where log.severity_number <= SEVERITY_NUMBER_ERROR4 and log.severity_number > 0
+          - set(log.attributes["sy_loglevel"], "warn") where log.severity_number <= SEVERITY_NUMBER_WARN4   and log.severity_number > 0
+          - set(log.attributes["sy_loglevel"], "info") where log.severity_number <= SEVERITY_NUMBER_INFO4   and log.severity_number > 0
+          - set(log.attributes["sy_loglevel"], "debug") where log.severity_number <= SEVERITY_NUMBER_DEBUG4 and log.severity_number > 0
+          - set(log.attributes["sy_loglevel"], "trace") where log.severity_number <= SEVERITY_NUMBER_TRACE4 and log.severity_number > 0
+          # for Loki: set level explicitly
+          - set(log.attributes["level"], log.attributes["sy_loglevel"])
+
 connectors:
   spanmetrics:
 
@@ -148,15 +198,18 @@ service:
     traces:
       receivers: [otlp]
       processors: [resourcedetection, memory_limiter, transform, batch]
-      exporters: [otlp, debug, spanmetrics]
+      exporters: [otlp, otlphttp/qryn, otlp/tempo, spanmetrics, opensearch, debug]
+      # exporting traces to OpenSearch does not work reliably with OpenSearch exporter
+      # get errors like "can't merge a non object mapping [attributes.upstream_cluster] with an object mapping"
+      # or "object mapping for [attributes.user_agent] tried to parse field [user_agent] as object, but found a concrete value"
     metrics:
-      receivers: [docker_stats, httpcheck/frontend-proxy, hostmetrics, nginx, otlp, postgresql, redis, spanmetrics]
+      receivers: [docker_stats, httpcheck/frontend-proxy, hostmetrics, nginx, otlp, redis, spanmetrics]
       processors: [resourcedetection, memory_limiter, batch]
-      exporters: [otlphttp/prometheus, debug]
+      exporters: [otlphttp/prometheus, prometheusremotewrite/qryn, debug]
     logs:
       receivers: [otlp]
-      processors: [resourcedetection, memory_limiter, batch]
-      exporters: [opensearch, debug]
+      processors: [resourcedetection, transform/loglevel,memory_limiter, batch]
+      exporters: [opensearch, otlphttp/qryn, debug]
   telemetry:
     metrics:
       level: detailed

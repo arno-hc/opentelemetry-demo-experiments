@@ -53,3 +53,11 @@ test/tracetesting/tracetesting-vars.yaml
 *.apk
 
 !src/currency/build
+
+# workaround for ZScaler issue (tls verification) at Grafana startup
+src/grafana/plugins
+
+# ignore data directories
+data/clickhouse
+data/opensearch
+data/logs

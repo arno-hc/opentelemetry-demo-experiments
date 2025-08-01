@@ -1,0 +1,28 @@
+# config file version
+apiVersion: 1
+
+# refer to https://github.com/gigapipehq/gigapipe-oss-demo/blob/main/grafana/provisioning/datasources/datasource.yml
+
+datasources:
+  - name: Tempo
+    type: tempo
+    access: proxy
+    uid: tempo
+    url: http://tempo:3200
+    editable: true
+    jsonData:
+      nodeGraph:
+        enabled: true
+      tracesToLogs:
+        datasourceUid: webstore-logs
+        filterByTraceID: false
+        spanEndTimeShift: "2000ms"
+        spanStartTimeShift: "-2000ms"
+        tags: ['job']
+      tracesToMetrics:
+        datasourceUid: webstore-metrics
+        tags: ['job']
+      serviceMap:
+        datasourceUid: webstore-metrics
+
+ 

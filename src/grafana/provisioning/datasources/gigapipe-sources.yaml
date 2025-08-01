@@ -1,0 +1,59 @@
+# config file version
+apiVersion: 1
+
+# refer to https://github.com/gigapipehq/gigapipe-oss-demo/blob/main/grafana/provisioning/datasources/datasource.yml
+
+datasources:
+  - name: Loki-qryn
+    type: loki
+    access: proxy
+    uid: loki-qryn
+    url: http://gigapipe:3100
+    editable: true
+    jsonData:
+      derivedFields:
+        - datasourceUid: tempo-qryn
+          matcherRegex: "^.*?traceI[d|D]=(\\w+).*$"
+          name: traceId
+          url: '$${__value.raw}'
+        - datasourceUid: tempo-qryn
+          matcherRegex: "^.*?\"traceID\":\"(\\w+)\".*$"
+          name: traceID
+          url: '$${__value.raw}'
+  - name: Tempo-qryn
+    type: tempo
+    access: proxy
+    uid: tempo-qryn
+    url: http://gigapipe:3100
+    editable: true
+    jsonData:
+      nodeGraph:
+        enabled: true
+      tracesToLogs:
+        datasourceUid: loki-qryn
+        filterByTraceID: false
+        spanEndTimeShift: "2000ms"
+        spanStartTimeShift: "-2000ms"
+        tags: ['job']
+      tracesToMetrics:
+        datasourceUid: prometheus-qryn
+        tags: ['job']
+      serviceMap:
+        datasourceUid: prometheus-qryn
+      lokiSearch:
+        datasourceUid: loki-qryn
+  - name: Prometheus-qryn
+    type: prometheus
+    access: proxy
+    uid: prometheus-qryn
+    url: http://gigapipe:3100
+    editable: true
+    basicAuth: false
+    jsonData:
+      httpMethod: GET
+      graphiteVersion: "1.1"
+      tlsAuth: false
+      tlsAuthWithCACert: false
+      cacheLevel: 'High'
+      incrementalQuerying: 'Enable'
+      incrementalQueryOverlapWindow: 2m

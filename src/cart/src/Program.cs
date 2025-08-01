@@ -28,7 +28,20 @@ if (string.IsNullOrEmpty(valkeyAddress))
 }
 
 builder.Logging
-    .AddOpenTelemetry(options => options.AddOtlpExporter())
+    .AddOpenTelemetry(options =>
+    {
+        options.AddOtlpExporter();
+        options.IncludeScopes = true;
+    })
+    .Configure(options =>
+    {
+        options.ActivityTrackingOptions = ActivityTrackingOptions.SpanId
+                                           | ActivityTrackingOptions.TraceId
+                                           | ActivityTrackingOptions.ParentId
+                                           | ActivityTrackingOptions.Baggage
+                                           | ActivityTrackingOptions.Tags;
+    })
+    
     .AddConsole();
 
 builder.Services.AddSingleton<ICartStore>(x =>
@@ -51,7 +64,8 @@ builder.Services.AddSingleton(x =>
     new CartService(
         x.GetRequiredService<ICartStore>(),
         new ValkeyCartStore(x.GetRequiredService<ILogger<ValkeyCartStore>>(), "badhost:1234"),
-        x.GetRequiredService<IFeatureClient>()
+        x.GetRequiredService<IFeatureClient>(),
+        x.GetRequiredService<ILogger<CartService>>()
 ));
 
 
