@@ -37,10 +37,12 @@ receivers:
         enabled: true
       container.restarts:
         enabled: true
+    # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/44511
+    api_version: "1.44"
   postgresql:
-    endpoint: "postgresql:5432"
-    username: "root"
-    password: "otel"
+    endpoint: ${POSTGRES_HOST}:${POSTGRES_PORT}
+    username: root
+    password: ${POSTGRES_PASSWORD}
     metrics:
       postgresql.blks_hit:
         enabled: true
@@ -71,6 +73,8 @@ receivers:
       cpu:
         metrics:
           system.cpu.utilization:
+            enabled: true
+          system.cpu.logical.count:
             enabled: true
       disk:
       load:
@@ -115,24 +119,37 @@ receivers:
         metrics:
           system.memory.utilization:
             enabled: true
+          system.memory.limit:
+            enabled: true
       network:
       paging:
+        metrics:
+          system.paging.usage:
+            enabled: true
+
       processes:
       process:
         mute_process_exe_error: true
         mute_process_io_error: true
         mute_process_user_error: true
-
+      system:
+        metrics:
+          system.uptime:
+            enabled: true
 exporters:
   debug:
   otlp:
     endpoint: "jaeger:4317"
     tls:
       insecure: true
+    sending_queue:
+      batch:
   otlphttp/prometheus:
     endpoint: "http://prometheus:9090/api/v1/otlp"
     tls:
       insecure: true
+    sending_queue:
+      batch:
   opensearch:
     logs_index: otel-logs
     logs_index_time_format: "yyyy-MM-dd"
@@ -140,6 +157,11 @@ exporters:
       endpoint: "http://opensearch:9200"
       tls:
         insecure: true
+    sending_queue:
+      # Explicitly set due to bug: https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/45016
+      num_consumers: 10
+      queue_size: 1000
+      batch:
   # otlp/qryn:
   #   endpoint: "otel-collector-qryn:4317"
   #   tls:
@@ -159,7 +181,6 @@ exporters:
     resource_to_telemetry_conversion:
       enabled: true # Convert resource attributes to metric labels    
 processors:
-  batch:
   memory_limiter:
     check_interval: 5s
     limit_percentage: 80
@@ -197,7 +218,7 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [resourcedetection, memory_limiter, transform, batch]
+      processors: [resourcedetection, memory_limiter, transform]
       exporters: [otlp, otlphttp/qryn, otlp/tempo, spanmetrics, opensearch, debug]
       # exporting traces to OpenSearch does not work reliably with OpenSearch exporter
       # get errors like "can't merge a non object mapping [attributes.upstream_cluster] with an object mapping"
@@ -220,4 +241,4 @@ service:
             exporter:
               otlp:
                 protocol: http/protobuf
-                endpoint: ${env:OTEL_COLLECTOR_HOST}:${env:OTEL_COLLECTOR_PORT_HTTP}
+                endpoint: http://${env:OTEL_COLLECTOR_HOST}:${env:OTEL_COLLECTOR_PORT_HTTP}
